@@ -43,3 +43,8 @@ python scripts/detect_person.py samples/input.jpg
 ```
 
 > Adicione uma imagem em `samples/input.jpg` para o primeiro teste.
+
+## Executor
+
+Fabiano Barros
+18/08/2026
