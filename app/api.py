@@ -9,13 +9,18 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.config import (
     DEFAULT_CONFIDENCE,
     DEFAULT_MODEL,
 )
-from app.detector import PersonDetector
+from app.detector import (
+    PersonDetection,
+    PersonDetector,
+)
+from app.visualizer import annotate_risk_image
 from app.zones import RiskZoneClassifier
 
 # -------------------------------------------------
@@ -31,13 +36,6 @@ CONFIG_PATH = ROOT / "config" / "zones.json"
 # Aplicação FastAPI
 # -------------------------------------------------
 
-# FastAPI é responsável por:
-#
-# - receber requisições HTTP
-# - validar parâmetros
-# - gerar documentação OpenAPI
-# - serializar objetos Python para JSON
-
 app = FastAPI(
     title="Person Risk Detection API",
     description=(
@@ -47,118 +45,88 @@ app = FastAPI(
 )
 
 
-# -------------------------------------------------
-# Componentes da aplicação
-# -------------------------------------------------
+# =================================================
+# COMPONENTES DA APLICAÇÃO
+# =================================================
 
-# O modelo é carregado uma única vez quando
-# o processo da API inicia.
+# O modelo YOLO é carregado UMA única vez.
 #
-# Isso é importante.
+# Isso é importante em uma API.
 #
-# NÃO queremos carregar o YOLO novamente
-# a cada requisição HTTP, porque carregar
-# os pesos do modelo possui custo significativo.
+# Se fizéssemos:
+#
+#     detector = PersonDetector()
+#
+# dentro de cada endpoint, o modelo poderia ser
+# recarregado a cada requisição.
+#
+# Isso aumentaria muito a latência.
 
 detector = PersonDetector()
 
 
-# O mesmo princípio vale para a configuração
-# das zonas.
+# O classificador de zonas também é criado uma vez.
+#
+# Ele carrega o arquivo:
+#
+#     config/zones.json
 
 zone_classifier = RiskZoneClassifier(CONFIG_PATH)
 
 
 # =================================================
-# MODELOS DE RESPOSTA
+# MODELOS DA RESPOSTA JSON
 # =================================================
-
-# Os modelos Pydantic descrevem formalmente
-# o JSON devolvido pela API.
-#
-# Isso traz:
-#
-# - validação
-# - documentação automática
-# - contrato explícito da API
-
-
-# -------------------------------------------------
-# Informações da imagem
-# -------------------------------------------------
 
 
 class ImageInfo(BaseModel):
     """
-    Dimensões da imagem recebida pela API.
+    Informações básicas da imagem recebida.
     """
 
     width: int
     height: int
 
 
-# -------------------------------------------------
-# Bounding Box
-# -------------------------------------------------
-
-
 class BoundingBoxResponse(BaseModel):
     """
-    Representa a bounding box da pessoa.
+    Bounding box da pessoa.
 
     Formato:
 
-        (x1, y1) --------
-           |             |
-           |   pessoa    |
-           |             |
-           -------- (x2, y2)
+        x1, y1
+          +----------------+
+          |                |
+          |     pessoa     |
+          |                |
+          +----------------+
+                         x2, y2
     """
 
     x1: int
     y1: int
-
     x2: int
     y2: int
 
 
-# -------------------------------------------------
-# Ponto na imagem
-# -------------------------------------------------
-
-
 class PointResponse(BaseModel):
     """
-    Representa uma coordenada x, y.
+    Coordenada de um ponto na imagem.
 
-    Neste projeto será utilizado principalmente
-    para representar o foot_point.
+    Neste projeto usamos para representar
+    principalmente o foot_point.
     """
 
     x: int
     y: int
 
 
-# -------------------------------------------------
-# Detecção individual
-# -------------------------------------------------
-
-
 class PersonDetectionResponse(BaseModel):
     """
-    Representa uma pessoa detectada.
-
-    Contém:
-
-        classe
-        confiança
-        bounding box
-        ponto dos pés
-        risco
+    Resultado estruturado para uma pessoa.
     """
 
     class_name: str
-
     confidence: float
 
     bbox: BoundingBoxResponse
@@ -168,18 +136,9 @@ class PersonDetectionResponse(BaseModel):
     risk: str
 
 
-# -------------------------------------------------
-# Resposta completa da inferência
-# -------------------------------------------------
-
-
 class InferenceResponse(BaseModel):
     """
-    Contrato JSON retornado pelo endpoint.
-
-    Além das pessoas detectadas, incluímos
-    algumas informações úteis para avaliação
-    de desempenho do sistema.
+    Contrato completo da resposta JSON.
     """
 
     filename: str | None
@@ -198,88 +157,48 @@ class InferenceResponse(BaseModel):
 
 
 # =================================================
-# ENDPOINTS
+# FUNÇÕES AUXILIARES
 # =================================================
 
 
-# -------------------------------------------------
-# Health Check
-# -------------------------------------------------
-
-
-@app.get("/health")
-def health() -> dict:
+async def decode_uploaded_image(
+    file: UploadFile,
+) -> np.ndarray:
     """
-    Health check simples da aplicação.
+    Converte o arquivo recebido via HTTP em
+    uma imagem OpenCV.
 
-    Esse endpoint não executa inferência.
+    Pipeline:
 
-    Ele existe para que:
-
-        Docker
-        orquestradores
-        monitoramento
-        operadores
-
-    consigam verificar se o serviço está ativo.
-    """
-
-    return {
-        "status": "ok",
-        "model": DEFAULT_MODEL,
-    }
-
-
-# -------------------------------------------------
-# Inferência JSON
-# -------------------------------------------------
-
-
-@app.post(
-    "/api/v1/infer",
-    response_model=InferenceResponse,
-)
-async def infer(
-    file: UploadFile = File(...),
-) -> InferenceResponse:
-    """
-    Recebe uma imagem via HTTP e devolve
-    o resultado estruturado em JSON.
-
-    Pipeline completo:
-
-        upload HTTP
+        UploadFile
             ↓
         bytes
             ↓
-        NumPy
+        numpy.ndarray
             ↓
-        OpenCV
+        cv2.imdecode
             ↓
-        YOLO
-            ↓
-        bounding boxes
-            ↓
-        foot_point
-            ↓
-        motor de zonas
-            ↓
-        SEGURO / ALERTA / CRÍTICO
-            ↓
-        JSON
+        imagem BGR
+
+
+    Essa função é compartilhada pelos dois endpoints:
+
+        /api/v1/infer
+
+        /api/v1/infer/annotated
+
+    Assim evitamos duplicação de código.
     """
 
-    # -------------------------------------------------
-    # 1. Leitura do arquivo enviado
-    # -------------------------------------------------
-
-    # UploadFile representa o arquivo recebido
-    # pelo protocolo HTTP multipart/form-data.
+    # ---------------------------------------------
+    # 1. Lê os bytes do upload
+    # ---------------------------------------------
 
     contents = await file.read()
 
-    # Não faz sentido continuar se o cliente
-    # enviou um arquivo vazio.
+    # ---------------------------------------------
+    # 2. Validação de arquivo vazio
+    # ---------------------------------------------
 
     if not contents:
         raise HTTPException(
@@ -287,41 +206,27 @@ async def infer(
             detail=("Arquivo de imagem vazio."),
         )
 
-    # -------------------------------------------------
-    # 2. Bytes -> NumPy
-    # -------------------------------------------------
-
-    # Uma requisição HTTP entrega bytes.
-    #
-    # OpenCV, porém, trabalha com matrizes.
-    #
-    # Primeiro transformamos os bytes em
-    # um vetor NumPy.
+    # ---------------------------------------------
+    # 3. Bytes -> vetor NumPy
+    # ---------------------------------------------
 
     image_buffer = np.frombuffer(
         contents,
         dtype=np.uint8,
     )
 
-    # -------------------------------------------------
-    # 3. NumPy -> imagem OpenCV
-    # -------------------------------------------------
-
-    # imdecode interpreta os bytes como:
-    #
-    # JPEG
-    # PNG
-    # etc.
-    #
-    # e produz uma matriz BGR.
+    # ---------------------------------------------
+    # 4. NumPy -> imagem OpenCV
+    # ---------------------------------------------
 
     image = cv2.imdecode(
         image_buffer,
         cv2.IMREAD_COLOR,
     )
 
-    # Se não for uma imagem válida,
-    # imdecode devolve None.
+    # ---------------------------------------------
+    # 5. Validação da imagem
+    # ---------------------------------------------
 
     if image is None:
         raise HTTPException(
@@ -329,76 +234,161 @@ async def infer(
             detail=("Não foi possível decodificar o arquivo como imagem."),
         )
 
-    # -------------------------------------------------
-    # 4. Dimensões da imagem
-    # -------------------------------------------------
+    return image
+
+
+# -------------------------------------------------
+# Inferência + classificação espacial
+# -------------------------------------------------
+
+
+def process_image(
+    image: np.ndarray,
+) -> tuple[
+    list[PersonDetection],
+    list[
+        tuple[
+            PersonDetection,
+            str,
+        ]
+    ],
+    float,
+]:
+    """
+    Executa o núcleo da aplicação.
+
+    Essa função é independente de HTTP.
+
+    Pipeline:
+
+        imagem
+            ↓
+        YOLO
+            ↓
+        PersonDetection
+            ↓
+        foot_point
+            ↓
+        RiskZoneClassifier
+            ↓
+        SEGURO / ALERTA / CRÍTICO
+
+
+    Retorna três elementos:
+
+        detections
+
+        risk_results
+
+        inference_ms
+
+
+    risk_results possui estrutura:
+
+        [
+            (
+                PersonDetection,
+                "SEGURO",
+            ),
+            (
+                PersonDetection,
+                "CRÍTICO",
+            ),
+        ]
+    """
 
     height, width = image.shape[:2]
 
-    # -------------------------------------------------
-    # 5. Medição de desempenho
-    # -------------------------------------------------
+    # ---------------------------------------------
+    # Medição da inferência
+    # ---------------------------------------------
 
-    # perf_counter é adequado para medir
-    # intervalos de tempo curtos.
+    # Aqui medimos especificamente o trecho
+    # que executa o detector YOLO.
+    #
+    # Depois faremos um benchmark mais rigoroso
+    # com múltiplas execuções.
 
     start = perf_counter()
 
-    # -------------------------------------------------
-    # 6. Inferência YOLO
-    # -------------------------------------------------
-
-    # Aqui está uma diferença importante
-    # em relação ao script anterior.
-    #
-    # Não estamos enviando:
-    #
-    #     samples/input.jpg
-    #
-    # Estamos enviando diretamente a matriz
-    # da imagem que chegou pela rede.
-
     detections = detector.detect(image)
-
-    # -------------------------------------------------
-    # 7. Tempo de inferência
-    # -------------------------------------------------
 
     inference_ms = (perf_counter() - start) * 1000.0
 
-    # -------------------------------------------------
-    # 8. Pós-processamento
-    # -------------------------------------------------
+    # ---------------------------------------------
+    # Classificação das zonas
+    # ---------------------------------------------
 
-    response_detections: list[PersonDetectionResponse] = []
+    risk_results: list[
+        tuple[
+            PersonDetection,
+            str,
+        ]
+    ] = []
 
     for detection in detections:
-        # ---------------------------------------------
-        # Bounding box
-        # ---------------------------------------------
-
-        x1, y1, x2, y2 = detection.bbox
-
-        # ---------------------------------------------
-        # Foot point
-        # ---------------------------------------------
-
-        foot_x, foot_y = detection.foot_point
-
-        # ---------------------------------------------
-        # Classificação espacial
-        # ---------------------------------------------
-
         risk = zone_classifier.classify(
             point=(detection.foot_point),
             width=width,
             height=height,
         )
 
-        # ---------------------------------------------
-        # Converte o resultado interno para
-        # nosso contrato HTTP
-        # ---------------------------------------------
+        risk_results.append(
+            (
+                detection,
+                risk,
+            )
+        )
+
+    return (
+        detections,
+        risk_results,
+        inference_ms,
+    )
+
+
+# -------------------------------------------------
+# Conversão para resposta JSON
+# -------------------------------------------------
+
+
+def build_json_response(
+    filename: str | None,
+    image: np.ndarray,
+    risk_results: list[
+        tuple[
+            PersonDetection,
+            str,
+        ]
+    ],
+    inference_ms: float,
+) -> InferenceResponse:
+    """
+    Converte nosso resultado interno para
+    o contrato JSON da API.
+
+    Essa separação é interessante porque:
+
+        domínio interno
+            PersonDetection
+
+    não precisa ser igual a:
+
+        contrato externo
+            PersonDetectionResponse
+    """
+
+    height, width = image.shape[:2]
+
+    response_detections: list[PersonDetectionResponse] = []
+
+    for (
+        detection,
+        risk,
+    ) in risk_results:
+        x1, y1, x2, y2 = detection.bbox
+
+        foot_x, foot_y = detection.foot_point
 
         response_detections.append(
             PersonDetectionResponse(
@@ -425,12 +415,8 @@ async def infer(
             )
         )
 
-    # -------------------------------------------------
-    # 9. Resposta HTTP
-    # -------------------------------------------------
-
     return InferenceResponse(
-        filename=file.filename,
+        filename=filename,
         image=ImageInfo(
             width=width,
             height=height,
@@ -443,4 +429,210 @@ async def infer(
         ),
         persons_detected=len(response_detections),
         detections=(response_detections),
+    )
+
+
+# =================================================
+# ENDPOINTS
+# =================================================
+
+
+# -------------------------------------------------
+# Health Check
+# -------------------------------------------------
+
+
+@app.get("/health")
+def health() -> dict:
+    """
+    Verifica se o serviço está ativo.
+
+    Não executa YOLO.
+    """
+
+    return {
+        "status": "ok",
+        "model": DEFAULT_MODEL,
+    }
+
+
+# -------------------------------------------------
+# Endpoint 1
+#
+# Inferência com retorno JSON
+# -------------------------------------------------
+
+
+@app.post(
+    "/api/v1/infer",
+    response_model=InferenceResponse,
+)
+async def infer(
+    file: UploadFile = File(...),
+) -> InferenceResponse:
+    """
+    Recebe uma imagem e devolve JSON.
+
+    Exemplo conceitual:
+
+        POST /api/v1/infer
+
+            imagem.jpg
+                ↓
+
+        {
+            "persons_detected": 2,
+            "detections": [...]
+        }
+    """
+
+    # ---------------------------------------------
+    # 1. Decodificação
+    # ---------------------------------------------
+
+    image = await decode_uploaded_image(file)
+
+    # ---------------------------------------------
+    # 2. Inferência + classificação
+    # ---------------------------------------------
+
+    (
+        _detections,
+        risk_results,
+        inference_ms,
+    ) = process_image(image)
+
+    # ---------------------------------------------
+    # 3. Resposta JSON
+    # ---------------------------------------------
+
+    return build_json_response(
+        filename=file.filename,
+        image=image,
+        risk_results=risk_results,
+        inference_ms=inference_ms,
+    )
+
+
+# -------------------------------------------------
+# Endpoint 2
+#
+# Inferência com retorno PNG
+# -------------------------------------------------
+
+
+@app.post(
+    "/api/v1/infer/annotated",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {"image/png": {}},
+            "description": ("Imagem PNG anotada com zonas e riscos."),
+        }
+    },
+)
+async def infer_annotated(
+    file: UploadFile = File(...),
+) -> Response:
+    """
+    Recebe uma imagem e devolve outra imagem
+    já anotada.
+
+    Pipeline:
+
+        upload
+            ↓
+        OpenCV
+            ↓
+        YOLO
+            ↓
+        RiskZoneClassifier
+            ↓
+        visualizer
+            ↓
+        PNG
+
+
+    Esse endpoint reutiliza exatamente os mesmos
+    componentes usados pelo script local.
+    """
+
+    # ---------------------------------------------
+    # 1. Decodificação
+    # ---------------------------------------------
+
+    image = await decode_uploaded_image(file)
+
+    height, width = image.shape[:2]
+
+    # ---------------------------------------------
+    # 2. Inferência + classificação
+    # ---------------------------------------------
+
+    (
+        _detections,
+        risk_results,
+        _inference_ms,
+    ) = process_image(image)
+
+    # ---------------------------------------------
+    # 3. Recuperação das zonas
+    # ---------------------------------------------
+
+    yellow_polygon = zone_classifier.get_polygon(
+        "yellow",
+        width,
+        height,
+    )
+
+    red_polygon = zone_classifier.get_polygon(
+        "red",
+        width,
+        height,
+    )
+
+    # ---------------------------------------------
+    # 4. Renderização
+    # ---------------------------------------------
+
+    annotated = annotate_risk_image(
+        image=image,
+        risk_results=(risk_results),
+        yellow_polygon=(yellow_polygon),
+        red_polygon=(red_polygon),
+    )
+
+    # ---------------------------------------------
+    # 5. Matriz OpenCV -> PNG
+    # ---------------------------------------------
+
+    # Até aqui temos uma matriz NumPy.
+    #
+    # Uma resposta HTTP precisa enviar bytes.
+    #
+    # cv2.imencode converte a imagem em memória
+    # para o formato PNG.
+
+    success, encoded_image = cv2.imencode(
+        ".png",
+        annotated,
+    )
+
+    # ---------------------------------------------
+    # 6. Validação da codificação
+    # ---------------------------------------------
+
+    if not success:
+        raise HTTPException(
+            status_code=500,
+            detail=("Falha ao gerar imagem PNG anotada."),
+        )
+
+    # ---------------------------------------------
+    # 7. Resposta HTTP
+    # ---------------------------------------------
+
+    return Response(
+        content=(encoded_image.tobytes()),
+        media_type="image/png",
     )
