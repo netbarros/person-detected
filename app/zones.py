@@ -26,6 +26,20 @@ class RiskZoneClassifier:
 
         return np.array(points, dtype=np.int32)
 
+    def get_polygon(
+        self,
+        zone_name: str,
+        width: int,
+        height: int,
+    ) -> np.ndarray:
+        normalized_points = self.config["zones"][zone_name]
+
+        return self._to_pixels(
+            normalized_points,
+            width,
+            height,
+        )
+
     def classify(
         self,
         point: tuple[int, int],
@@ -47,6 +61,6 @@ class RiskZoneClassifier:
         )
 
         if result >= 0:
-            return "CRITICAL"
+            return "CRÍTICO"
 
-        return "SAFE"
+        return "SEGURO"
