@@ -11,7 +11,7 @@ CONFIG_PATH = ROOT / "config" / "zones.json"
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Detecta pessoas em uma imagem usando YOLO."
+        description="Detecta pessoas e classifica risco por zona."
     )
 
     parser.add_argument(
@@ -68,16 +68,9 @@ def main() -> None:
             f"risco={risk}"
         )
 
-    detector.annotate(
-        args.image,
-        detections,
-        args.output,
-    )
-
-    annotated = cv2.imread(str(args.output))
-
-    if annotated is None:
-        raise ValueError(f"Não foi possível abrir a imagem anotada: {args.output}")
+    # Parte diretamente da imagem original.
+    # Assim evitamos o rótulo antigo "person 0.xx".
+    annotated = image.copy()
 
     # -------------------------------------------------
     # Desenha a zona vermelha
@@ -119,6 +112,7 @@ def main() -> None:
     )
 
     zone_label_x = zone_x
+
     zone_label_y = max(
         zone_text_height + 10,
         zone_y - 10,
@@ -153,11 +147,13 @@ def main() -> None:
     )
 
     # -------------------------------------------------
-    # Desenha o risco de cada pessoa
+    # Desenha cada pessoa com um único rótulo
     # -------------------------------------------------
 
     for detection, risk in risk_results:
         x1, y1, x2, y2 = detection.bbox
+
+        foot_x, foot_y = detection.foot_point
 
         if risk == "CRÍTICO":
             color = (0, 0, 255)
@@ -172,9 +168,20 @@ def main() -> None:
             3,
         )
 
-        risk_label = risk
+        # Mostra o ponto usado para decidir
+        # se a pessoa está dentro da zona.
+        cv2.circle(
+            annotated,
+            (foot_x, foot_y),
+            6,
+            color,
+            -1,
+        )
+
+        risk_label = f"{risk} | {detection.confidence:.2f}"
 
         risk_font = cv2.FONT_HERSHEY_SIMPLEX
+
         risk_font_scale = 0.7
         risk_thickness = 2
 
@@ -192,6 +199,10 @@ def main() -> None:
         )
 
         risk_label_x = x1
+
+        # Mantemos o texto dentro da caixa.
+        # Isso evita cortar o rótulo de pessoas
+        # próximas ao topo da imagem.
         risk_label_y = y1 + risk_text_height + 10
 
         cv2.rectangle(
@@ -225,6 +236,11 @@ def main() -> None:
     # -------------------------------------------------
     # Salva resultado final
     # -------------------------------------------------
+
+    args.output.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     if not cv2.imwrite(
         str(args.output),
