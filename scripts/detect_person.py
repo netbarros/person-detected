@@ -1,7 +1,12 @@
 import argparse
 from pathlib import Path
 
+import cv2
 from app.detector import PersonDetector
+from app.zones import RiskZoneClassifier
+
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG_PATH = ROOT / "config" / "zones.json"
 
 
 def main() -> None:
@@ -20,14 +25,33 @@ def main() -> None:
     if not args.image.exists():
         raise FileNotFoundError(f"Imagem não encontrada: {args.image}")
 
+    image = cv2.imread(str(args.image))
+
+    if image is None:
+        raise ValueError(f"Não foi possível abrir a imagem: {args.image}")
+
+    height, width = image.shape[:2]
+
     detector = PersonDetector()
     detections = detector.detect(args.image)
 
+    zone_classifier = RiskZoneClassifier(CONFIG_PATH)
+
     print(f"Pessoas detectadas: {len(detections)}")
+
     for index, detection in enumerate(detections, start=1):
+        risk = zone_classifier.classify(
+            point=detection.foot_point,
+            width=width,
+            height=height,
+        )
+
         print(
-            f"{index}: confiança={detection.confidence:.3f}, "
-            f"bbox={detection.bbox}, foot_point={detection.foot_point}"
+            f"{index}: "
+            f"confiança={detection.confidence:.3f}, "
+            f"bbox={detection.bbox}, "
+            f"foot_point={detection.foot_point}, "
+            f"risco={risk}"
         )
 
     detector.annotate(args.image, detections, args.output)
