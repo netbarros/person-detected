@@ -19,8 +19,8 @@ height, width = image.shape[:2]
 classifier = RiskZoneClassifier(CONFIG_PATH)
 
 test_points = [
-    ((643, 583), "SAFE"),
-    ((443, 555), "CRITICAL"),
+    ((643, 583), "SEGURO"),
+    ((443, 555), "CRÍTICO"),
 ]
 
 print(f"Imagem: {width}x{height}")
