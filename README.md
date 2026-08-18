@@ -38,8 +38,10 @@ Nesta primeira etapa, o projeto contém a fundação e um pipeline mínimo para 
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
+python.exe -m pip install --upgrade pip
 pip install -r requirements.txt
-python scripts/detect_person.py samples/input.jpg
+python -m scripts.detect_person samples/input.jpg
 ```
 
 > Adicione uma imagem em `samples/input.jpg` para o primeiro teste.
