@@ -1,0 +1,27 @@
+@'
+.git
+.gitignore
+
+.venv
+venv
+
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+.vscode
+.idea
+
+*.log
+.env
+
+outputs
+samples
+
+tests
+scripts
+
+.DS_Store
+Thumbs.db
+'@ | Set-Content -Encoding utf8 .dockerignore
