@@ -1,0 +1,81 @@
+# ================================================================
+# Docker Compose - Person Detected / Edge AI Risk Zone Monitor
+# ================================================================
+#
+# Objetivo didático
+# -----------------
+# O Dockerfile descreve COMO construir a imagem.
+# O docker-compose.yml descreve COMO executar o serviço.
+#
+# O documento do teste exige explicitamente:
+#   - docker-compose.yml funcional;
+#   - exposição de porta;
+#   - restart: always.
+#
+# A variável APP_PORT permite trocar a porta do HOST sem alterar a
+# porta interna do container. Exemplo no PowerShell:
+#
+#   $env:APP_PORT=8001
+#   docker compose up --build -d
+#
+# Sem APP_PORT, o serviço fica disponível em localhost:8000.
+# ================================================================
+
+services:
+  api:
+    # ------------------------------------------------------------
+    # Build
+    # ------------------------------------------------------------
+    # Reutiliza exatamente o Dockerfile validado no projeto.
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: person-detected:local
+    container_name: person-detected
+
+    # ------------------------------------------------------------
+    # Requisito explícito da avaliação técnica
+    # ------------------------------------------------------------
+    # Reinicia o serviço automaticamente após falha/restart do daemon.
+    restart: always
+
+    # Usa um init mínimo para encaminhamento correto de sinais e
+    # reaping de processos filhos dentro do container.
+    init: true
+
+    # ------------------------------------------------------------
+    # Porta HTTP
+    # ------------------------------------------------------------
+    # HOST:CONTAINER
+    #
+    # Padrão:
+    #   localhost:8000 -> container:8000
+    ports:
+      - "${APP_PORT:-8000}:8000"
+
+    # ------------------------------------------------------------
+    # Variáveis de runtime
+    # ------------------------------------------------------------
+    environment:
+      PYTHONUNBUFFERED: "1"
+      YOLO_CONFIG_DIR: /tmp/Ultralytics
+
+    # ------------------------------------------------------------
+    # Health check
+    # ------------------------------------------------------------
+    # Repetimos aqui de forma explícita o healthcheck para que quem
+    # avalia o Compose consiga entender o contrato operacional sem
+    # precisar navegar até o Dockerfile.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

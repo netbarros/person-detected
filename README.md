@@ -1,124 +1,214 @@
 # Person Detected — Edge AI Risk Zone Monitor
 
-Projeto de Edge AI para detecção de pessoas e classificação de risco em zonas próximas a máquinas e áreas industriais.
+Projeto técnico de **Visão Computacional Embarcada (Edge AI)** para detecção de pessoas, classificação de risco em zonas próximas a máquinas e geração de alertas proporcionais ao nível de perigo.
 
-A solução combina visão computacional com regras geométricas determinísticas:
+A solução foi estruturada para demonstrar, de forma reproduzível e explicável:
 
-```text
-imagem
-  ↓
-YOLO
-  ↓
-detecção de pessoa
-  ↓
-bounding box
-  ↓
-foot_point
-  ↓
-classificação espacial
-  ↓
-SEGURO / ALERTA / CRÍTICO
-```
+- detecção de pessoas com modelo pré-treinado;
+- pós-processamento espacial por zonas;
+- classificação `SEGURO / ALERTA / CRÍTICO`;
+- política de alertas proporcional ao risco;
+- API HTTP com retorno JSON e PNG anotado;
+- containerização com Docker;
+- execução com Docker Compose;
+- build multi-arquitetura `linux/amd64` e `linux/arm64`;
+- análise de viabilidade para Raspberry Pi 5;
+- benchmark em CPU sem GPU;
+- testes automatizados e validação E2E.
 
-O objetivo é demonstrar uma arquitetura simples, explicável e compatível com execução em dispositivos Edge, com Raspberry Pi 5 como alvo de implantação.
+> **Princípio arquitetural:** IA para percepção; regras determinísticas para decisão espacial e política de alerta.
 
 ---
 
-## 1. Problema
+## 1. Problema e objetivo
 
-Em ambientes industriais, uma pessoa pode se aproximar de regiões onde existem máquinas, equipamentos móveis ou outros elementos que representam risco operacional.
+Em ambientes industriais, pessoas podem se aproximar de regiões onde máquinas, equipamentos móveis ou zonas operacionais apresentam risco.
 
-A proposta deste projeto é monitorar visualmente essas regiões utilizando uma câmera e identificar quando uma pessoa entra em zonas previamente configuradas.
+O objetivo deste projeto é analisar uma imagem ou frame de câmera, identificar pessoas e determinar se cada pessoa está:
 
-O sistema trabalha com três estados:
-
-| Estado    | Significado                    |
-| --------- | ------------------------------ |
-| `SEGURO`  | Pessoa fora das zonas de risco |
-| `ALERTA`  | Pessoa dentro da zona amarela  |
-| `CRÍTICO` | Pessoa dentro da zona vermelha |
+| Estado    | Significado             |
+| --------- | ----------------------- |
+| `SEGURO`  | fora das zonas de risco |
+| `ALERTA`  | dentro da zona amarela  |
+| `CRÍTICO` | dentro da zona vermelha |
 
 A zona vermelha possui prioridade sobre a zona amarela.
 
----
+Além da classificação, o sistema produz uma **decisão de alerta proporcional ao maior risco observado no frame**.
 
-## 2. Princípio arquitetural
-
-A solução separa duas responsabilidades.
-
-### Percepção com IA
-
-O modelo YOLO responde à pergunta:
-
-> Onde existe uma pessoa na imagem?
-
-O resultado principal é uma `bounding box`.
-
-### Decisão espacial determinística
-
-Depois da detecção, uma regra geométrica responde:
-
-> A pessoa está dentro de qual zona?
-
-Essa decisão não é delegada ao modelo de IA.
-
-Em resumo:
+Fluxo principal:
 
 ```text
-IA para percepção.
-Regra determinística para decisão espacial.
+imagem/frame
+    ↓
+pré-processamento
+    ↓
+YOLO11n
+    ↓
+detecção de person
+    ↓
+bounding box
+    ↓
+foot_point
+    ↓
+motor de zonas
+    ↓
+SEGURO / ALERTA / CRÍTICO
+    ↓
+política de alerta
+    ↓
+JSON / PNG anotado / log de alerta
 ```
 
-Essa separação torna a solução mais simples de explicar, testar e manter.
+---
+
+## 2. Escopo da solução
+
+O projeto utiliza um modelo YOLO pré-treinado e filtra somente a classe `person`.
+
+Não foi realizado treinamento customizado nesta etapa.
+
+O protótipo contempla:
+
+```text
+detecção de pessoas
+bounding boxes
+confidence
+foot_point
+zona amarela
+zona vermelha
+classificação de risco
+alerta proporcional
+imagem anotada
+API HTTP
+Docker
+Docker Compose
+build AMD64
+build ARM64
+Buildx multiarch
+benchmark
+testes automatizados
+validação E2E
+```
+
+O Raspberry Pi 5 é tratado como **alvo de implantação Edge**, mas os benchmarks documentados neste repositório foram medidos em outro hardware. Compatibilidade ARM64 não é confundida com performance real na placa.
 
 ---
 
 ## 3. Arquitetura
 
 ```text
-                   +----------------------+
-                   |       Imagem         |
-                   +----------+-----------+
-                              |
-                              v
-                   +----------------------+
-                   |     YOLO11 Nano      |
-                   | detecção de pessoas  |
-                   +----------+-----------+
-                              |
-                              v
-                   +----------------------+
-                   |    Bounding Box      |
-                   +----------+-----------+
-                              |
-                              v
-                   +----------------------+
-                   |     Foot Point       |
-                   | centro inferior bbox |
-                   +----------+-----------+
-                              |
-                              v
-                   +----------------------+
-                   |   Motor de Zonas     |
-                   | pointPolygonTest()   |
-                   +----------+-----------+
-                              |
-                +-------------+-------------+
-                |             |             |
-                v             v             v
-             SEGURO        ALERTA        CRÍTICO
-                |             |             |
-                +-------------+-------------+
-                              |
-                 +------------+------------+
-                 |                         |
-                 v                         v
-             JSON API                 PNG anotado
+                      +----------------------+
+                      |   Upload / Imagem    |
+                      +----------+-----------+
+                                 |
+                                 v
+                      +----------------------+
+                      | Pré-processamento    |
+                      | bytes -> OpenCV BGR  |
+                      +----------+-----------+
+                                 |
+                                 v
+                      +----------------------+
+                      |      YOLO11n         |
+                      | classe: person       |
+                      +----------+-----------+
+                                 |
+                                 v
+                      +----------------------+
+                      | Bounding Box + Conf. |
+                      +----------+-----------+
+                                 |
+                                 v
+                      +----------------------+
+                      |     Foot Point       |
+                      | centro inferior bbox |
+                      +----------+-----------+
+                                 |
+                                 v
+                      +----------------------+
+                      |   Motor de Zonas     |
+                      | pointPolygonTest()   |
+                      +----------+-----------+
+                                 |
+                  +--------------+--------------+
+                  |              |              |
+                  v              v              v
+               SEGURO         ALERTA         CRÍTICO
+                  |              |              |
+                  +--------------+--------------+
+                                 |
+                                 v
+                      +----------------------+
+                      | Política de Alerta   |
+                      +----------+-----------+
+                                 |
+                     +-----------+-----------+
+                     |                       |
+                     v                       v
+                 JSON API                PNG anotado
+                     |
+                     v
+                log / integração
 ```
+
+A arquitetura separa responsabilidades:
+
+- **YOLO:** percepção probabilística;
+- **motor de zonas:** decisão espacial determinística;
+- **política de alerta:** decisão operacional determinística;
+- **visualizador:** evidência visual;
+- **API:** contrato de integração;
+- **Docker/Compose:** empacotamento e execução reproduzível.
 
 ---
 
-## 4. Por que YOLO11n
+## 4. Pipeline de visão computacional
+
+### 4.1 Pré-processamento
+
+Na API, o arquivo enviado por HTTP é processado em memória:
+
+```text
+UploadFile
+→ bytes
+→ np.frombuffer()
+→ cv2.imdecode()
+→ imagem BGR
+```
+
+Não é necessário criar arquivo temporário no servidor.
+
+Depois disso, a imagem é entregue ao runner do Ultralytics. O pré-processamento específico necessário ao modelo é delegado à biblioteca de inferência, evitando duplicação de transformações dentro da aplicação.
+
+### 4.2 Inferência
+
+```text
+imagem BGR
+→ YOLO11n
+→ filtro da classe person
+→ confidence threshold = 0.40
+→ bounding boxes
+```
+
+O detector da aplicação encapsula os objetos internos do Ultralytics e devolve objetos de domínio `PersonDetection`.
+
+### 4.3 Pós-processamento
+
+```text
+bounding box
+→ foot_point
+→ pointPolygonTest
+→ risco espacial
+→ política de alerta
+→ contrato JSON ou visualização PNG
+```
+
+Essa divisão é proposital: a parte probabilística fica restrita à percepção; as regras espaciais e de alerta são explícitas e testáveis.
+
+---
+
+## 5. Escolha do modelo — YOLO11n
 
 O projeto utiliza:
 
@@ -126,25 +216,57 @@ O projeto utiliza:
 yolo11n.pt
 ```
 
-A variante Nano foi escolhida por oferecer um compromisso adequado entre:
+A variante Nano foi adotada como **baseline pré-treinado** por oferecer um compromisso adequado para Edge AI entre:
 
 - tamanho do modelo;
 - custo computacional;
 - latência;
-- simplicidade de uso;
-- possibilidade de implantação em Edge.
+- uso de memória;
+- simplicidade de implantação;
+- capacidade de detectar a classe `person`.
 
-O projeto utiliza um modelo pré-treinado e filtra somente a classe `person`.
+A escolha **não afirma que YOLO11n seja universalmente o modelo mais preciso**.
 
-Não foi realizado treinamento customizado neste estágio.
+Para este protótipo, o objetivo é demonstrar uma solução funcional e viável para execução em CPU/Edge. Em implantação industrial real, a escolha final deve ser baseada em comparação experimental entre modelos e runtimes no hardware e dataset alvo.
 
-Para um cenário industrial real, um processo posterior pode incluir fine-tuning com imagens representativas do ambiente específico.
+### Precisão no cenário industrial
+
+A imagem de demonstração prova o funcionamento do pipeline, mas **não constitui um dataset de validação de acurácia**.
+
+Para medir precisão de forma adequada, seria necessário construir um conjunto rotulado com as condições reais do cenário, incluindo:
+
+```text
+câmera elevada
+múltiplas pessoas
+variação de iluminação
+fumaça ou névoa
+oclusões
+vibração
+distância
+perspectiva
+motion blur
+```
+
+As métricas relevantes incluem:
+
+```text
+Precision
+Recall
+F1-score
+IoU
+mAP
+matriz de confusão
+```
+
+Em um contexto de monitoramento de risco, falsos negativos merecem atenção especial: se uma pessoa não é detectada, o motor de zonas não consegue avaliar sua posição.
+
+Se a baseline não atingir os critérios definidos para o ambiente real, os próximos passos seriam fine-tuning com dados representativos e comparação com outras variantes/modelos.
 
 ---
 
-## 5. Bounding box e foot point
+## 6. Bounding box e foot point
 
-O detector retorna uma caixa delimitadora:
+O detector retorna uma bounding box no formato:
 
 ```text
 (x1, y1)
@@ -156,9 +278,7 @@ O detector retorna uma caixa delimitadora:
                   (x2, y2)
 ```
 
-Para determinar a posição da pessoa em relação ao piso, o projeto não utiliza o centro da bounding box.
-
-É utilizado o ponto central inferior:
+Para representar a posição aproximada da pessoa no piso, o projeto utiliza o ponto central inferior:
 
 ```python
 foot_x = (x1 + x2) // 2
@@ -177,11 +297,11 @@ Visualmente:
         foot_point
 ```
 
-Essa estratégia aproxima o ponto de contato da pessoa com o chão e é mais adequada para zonas definidas sobre o piso.
+O centro da bounding box representa aproximadamente o tronco. Para zonas desenhadas sobre o piso, o `foot_point` é uma aproximação espacial mais adequada.
 
 ---
 
-## 6. Zonas de risco
+## 7. Zonas de risco
 
 As zonas são armazenadas em:
 
@@ -189,51 +309,91 @@ As zonas são armazenadas em:
 config/zones.json
 ```
 
-As coordenadas são normalizadas entre `0` e `1`.
-
-Isso permite utilizar a mesma configuração em imagens de diferentes resoluções.
+As coordenadas são normalizadas entre `0` e `1`, permitindo reutilizar a configuração em diferentes resoluções.
 
 O sistema possui:
 
 ```text
-yellow
-→ ALERTA
-
-red
-→ CRÍTICO
+yellow → ALERTA
+red    → CRÍTICO
 ```
 
-A classificação é realizada com:
+A classificação utiliza:
 
 ```python
 cv2.pointPolygonTest(...)
 ```
 
+A borda do polígono é considerada parte da zona.
+
 A prioridade é:
 
 ```text
-zona vermelha
-    ↓
-CRÍTICO
+se estiver na zona vermelha
+→ CRÍTICO
 
-senão, zona amarela
-    ↓
-ALERTA
+senão, se estiver na zona amarela
+→ ALERTA
 
 senão
-    ↓
-SEGURO
+→ SEGURO
 ```
+
+A zona vermelha é verificada primeiro porque pode estar geometricamente contida na zona amarela.
 
 ---
 
-## 7. Estrutura do projeto
+## 8. Alertas proporcionais ao risco
+
+Além de classificar o risco espacial, o sistema converte o maior risco observado no frame em uma decisão de alerta.
+
+Política implementada:
+
+| Risco espacial | Nível de alerta | Ação lógica                      |
+| -------------- | --------------- | -------------------------------- |
+| `SEGURO`       | `NONE`          | `NONE`                           |
+| `ALERTA`       | `WARNING`       | `WARN_OPERATOR`                  |
+| `CRÍTICO`      | `CRITICAL`      | `REQUEST_IMMEDIATE_INTERVENTION` |
+
+Exemplo com múltiplas pessoas:
+
+```text
+Pessoa A → SEGURO
+Pessoa B → ALERTA
+Pessoa C → CRÍTICO
+
+Alerta global → CRITICAL
+```
+
+A política está isolada em `app/alerts.py`.
+
+Nesta versão, o `AlertDispatcher` registra alertas ativos em log. Isso permite demonstrar resposta automática de forma reproduzível sem alegar a existência de hardware físico que não está conectado.
+
+O dispatcher é o ponto de extensão para integrações futuras, por exemplo:
+
+```text
+GPIO
+sinalizador luminoso/sonoro
+MQTT
+CLP
+relé
+sistema supervisório
+```
+
+### Limite importante
+
+O projeto **não implementa uma função de segurança certificada** e não deve comandar diretamente parada ou intertravamento de máquina sem a engenharia, análise de risco, validação e certificação aplicáveis.
+
+---
+
+## 9. Estrutura do projeto
 
 ```text
 person-detected/
 │
 ├── app/
 │   ├── __init__.py
+│   ├── alerts.py
 │   ├── api.py
 │   ├── config.py
 │   ├── detector.py
@@ -249,10 +409,12 @@ person-detected/
 │   ├── benchmark_api.py
 │   ├── detect_person.py
 │   ├── mark_zones.py
-│   └── test_zones.py
+│   ├── test_zones.py
+│   └── verify_part1.ps1
 │
 ├── tests/
 │   ├── __init__.py
+│   ├── test_alerts.py
 │   ├── test_api.py
 │   └── test_zones.py
 │
@@ -263,79 +425,109 @@ person-detected/
 │   └── person-detected.png
 │
 ├── Dockerfile
+├── docker-compose.yml
 ├── .dockerignore
 ├── .gitignore
 ├── requirements.txt
+├── yolo11n.pt
 └── README.md
 ```
 
 ---
 
-## 8. Componentes principais
+## 10. Componentes principais
 
 ### `app/detector.py`
 
-Encapsula o modelo YOLO.
-
-Responsabilidades:
+Responsável por:
 
 ```text
-carregar modelo
-→ executar inferência
-→ filtrar person
-→ gerar PersonDetection
-→ fornecer bbox e foot_point
+carregar YOLO
+executar inferência
+filtrar person
+converter resultado para PersonDetection
+fornecer bbox e foot_point
 ```
 
 ### `app/zones.py`
 
-Implementa a decisão espacial.
-
-Responsabilidades:
+Responsável por:
 
 ```text
 carregar zones.json
-→ converter coordenadas normalizadas
-→ construir polígonos
-→ testar foot_point
-→ retornar risco
+validar configuração
+converter coordenadas normalizadas
+construir polígonos
+testar foot_point
+retornar SEGURO / ALERTA / CRÍTICO
+```
+
+### `app/alerts.py`
+
+Responsável por:
+
+```text
+selecionar maior risco do frame
+converter risco em nível de alerta
+definir ação lógica
+despachar alerta disponível no protótipo
 ```
 
 ### `app/visualizer.py`
 
-Responsável pela apresentação visual.
-
-Desenha:
+Responsável por desenhar:
 
 ```text
 zonas
 bounding boxes
 foot points
-nível de risco
-confiança
+risco
+confidence
 ```
 
 ### `app/api.py`
 
-Expõe o pipeline através de HTTP usando FastAPI.
+Responsável por orquestrar:
+
+```text
+upload
+decode
+inferência
+classificação espacial
+alerta
+JSON / PNG
+```
 
 ### `scripts/`
 
-Contém ferramentas de calibração, demonstração e benchmark.
+Ferramentas de:
+
+```text
+calibração
+execução local
+benchmark
+verificação E2E
+```
 
 ### `tests/`
 
-Contém testes automatizados determinísticos da API e do motor de zonas.
+Testes automatizados da:
+
+```text
+API
+política de alerta
+classificação de zonas
+```
 
 ---
 
-## 9. Requisitos
+## 11. Requisitos
 
-O container de produção utiliza Python 3.11.
+O container utiliza Python 3.11.
 
-O ambiente local utilizado durante parte dos testes utilizou Python 3.13.5.
+O ambiente local utilizado durante os testes de desenvolvimento apresentou Python 3.13.5.
 
-As principais dependências são:
+Principais dependências:
 
 ```text
 Ultralytics
@@ -348,19 +540,15 @@ pytest
 httpx2
 ```
 
----
-
-## 10. Instalação local
+Instalação:
 
 ### Windows PowerShell
 
 ```powershell
 python -m venv .venv
-
 .\.venv\Scripts\Activate.ps1
 
 python -m pip install --upgrade pip
-
 pip install -r requirements.txt
 ```
 
@@ -368,19 +556,17 @@ pip install -r requirements.txt
 
 ```bash
 python3 -m venv .venv
-
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
-
 pip install -r requirements.txt
 ```
 
 ---
 
-## 11. Execução local
+## 12. Execução local do pipeline
 
-Para executar a detecção diretamente sobre a imagem:
+Execute:
 
 ```powershell
 python -m scripts.detect_person samples/input.jpg
@@ -392,10 +578,10 @@ A saída é gerada em:
 outputs/person-detected.png
 ```
 
-O terminal também apresenta informações como:
+O terminal apresenta, para cada pessoa:
 
 ```text
-confiança
+confidence
 bounding box
 foot_point
 risco
@@ -403,9 +589,7 @@ risco
 
 ---
 
-## 12. Calibração das zonas
-
-A ferramenta de calibração permite definir os polígonos visualmente.
+## 13. Calibração das zonas
 
 Zona vermelha:
 
@@ -419,26 +603,17 @@ Zona amarela:
 python -m scripts.mark_zones yellow
 ```
 
-Durante a calibração:
+Comandos da interface:
 
 ```text
-clique esquerdo
-→ adiciona ponto
-
-U
-→ desfaz último ponto
-
-C
-→ limpa pontos
-
-S
-→ salva
-
-ESC
-→ encerra
+clique esquerdo → adiciona ponto
+U               → desfaz último ponto
+C               → limpa pontos
+S               → salva
+ESC             → encerra
 ```
 
-As coordenadas são armazenadas de forma normalizada em:
+As coordenadas são persistidas em:
 
 ```text
 config/zones.json
@@ -446,25 +621,33 @@ config/zones.json
 
 ---
 
-## 13. API HTTP
+## 14. API HTTP
 
-Suba a API localmente:
+Para executar localmente:
 
 ```powershell
 python -m uvicorn app.api:app --host 127.0.0.1 --port 8000
 ```
 
-Documentação Swagger:
+Swagger:
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
+Dentro do container, o Uvicorn escuta em:
+
+```text
+0.0.0.0:8000
+```
+
+A publicação para o host é feita pelo Docker/Compose.
+
+Os exemplos abaixo usam `localhost`. A API não precisa estar publicada na Internet para demonstrar os endpoints HTTP funcionais.
+
 ---
 
-## 14. Health check
-
-Endpoint:
+## 15. Endpoint de health check
 
 ```http
 GET /health
@@ -485,11 +668,11 @@ Resposta:
 }
 ```
 
+O health check não executa inferência YOLO.
+
 ---
 
-## 15. Inferência com resposta JSON
-
-Endpoint:
+## 16. Endpoint 1 — inferência com JSON
 
 ```http
 POST /api/v1/infer
@@ -503,7 +686,7 @@ curl.exe -X POST `
   -F "file=@samples/input.jpg"
 ```
 
-Exemplo de resposta:
+Contrato de resposta:
 
 ```json
 {
@@ -547,17 +730,22 @@ Exemplo de resposta:
       },
       "risk": "CRÍTICO"
     }
-  ]
+  ],
+  "alert": {
+    "active": true,
+    "level": "CRITICAL",
+    "source_risk": "CRÍTICO",
+    "action": "REQUEST_IMMEDIATE_INTERVENTION",
+    "message": "Pessoa detectada na zona vermelha: solicitar intervenção imediata do sistema responsável."
+  }
 }
 ```
 
-O valor de `inference_ms` varia entre execuções e não deve ser tratado como constante.
+`inference_ms` é medido em runtime e varia entre execuções.
 
 ---
 
-## 16. Inferência com imagem anotada
-
-Endpoint:
+## 17. Endpoint 2 — imagem PNG anotada
 
 ```http
 POST /api/v1/infer/annotated
@@ -572,7 +760,7 @@ curl.exe -X POST `
   --output outputs/api-annotated.png
 ```
 
-O endpoint retorna:
+Resposta:
 
 ```text
 Content-Type: image/png
@@ -586,26 +774,44 @@ zona vermelha
 bounding boxes
 foot points
 risco
-confiança
+confidence
 ```
 
-Na renderização OpenCV o texto `CRÍTICO` é exibido como:
+O endpoint também expõe headers de alerta:
+
+```text
+X-Alert-Active
+X-Alert-Level
+X-Alert-Action
+```
+
+Exemplo para ocorrência crítica:
+
+```text
+X-Alert-Active: true
+X-Alert-Level: CRITICAL
+X-Alert-Action: REQUEST_IMMEDIATE_INTERVENTION
+```
+
+### Unicode na imagem
+
+O valor interno permanece:
+
+```text
+CRÍTICO
+```
+
+No desenho OpenCV é exibido:
 
 ```text
 CRITICO
 ```
 
-porque as fontes Hershey utilizadas por `cv2.putText()` não possuem suporte Unicode completo.
-
-O valor original continua sendo mantido no domínio e no JSON:
-
-```json
-"risk": "CRÍTICO"
-```
+porque as fontes Hershey usadas por `cv2.putText()` não oferecem suporte Unicode completo.
 
 ---
 
-## 17. Docker
+## 18. Docker
 
 Build local:
 
@@ -613,7 +819,7 @@ Build local:
 docker build -t person-detected:local .
 ```
 
-Execução:
+Execução direta:
 
 ```powershell
 docker run --rm `
@@ -622,68 +828,106 @@ docker run --rm `
   person-detected:local
 ```
 
-A porta `8001` é utilizada no host apenas para evitar possíveis conflitos locais.
+Neste exemplo:
 
-O serviço continua executando na porta `8000` dentro do container.
-
-Teste:
-
-```powershell
-curl.exe http://127.0.0.1:8001/health
+```text
+host:8001 → container:8000
 ```
+
+A porta `8001` no host foi usada durante o desenvolvimento para evitar conflito local com outro serviço.
 
 ---
 
-## 18. OpenCV em ambiente headless
+## 19. OpenCV headless
 
-O container não necessita de interface gráfica.
+O container de API não necessita de interface gráfica.
 
 Por isso utiliza:
-
-```text
-opencv-python-headless
-```
-
-em vez da variante desktop do OpenCV.
-
-Isso evita dependências gráficas desnecessárias no runtime da API.
-
-A versão utilizada no container foi fixada em:
 
 ```text
 opencv-python-headless==4.12.0.88
 ```
 
-O processo de build também valida explicitamente que o módulo `cv2` pode ser importado antes de carregar o YOLO.
+O Dockerfile também remove a variante desktop de OpenCV eventualmente instalada como dependência transitiva e valida o import do `cv2` durante o build.
+
+Essa decisão evita carregar dependências gráficas desnecessárias no runtime do container.
 
 ---
 
-## 19. Modelo dentro da imagem Docker
+## 20. Modelo dentro da imagem Docker
 
-O modelo YOLO é carregado durante o build da imagem:
+O Dockerfile carrega o YOLO durante o build:
 
 ```dockerfile
-RUN python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
+RUN python -c "from ultralytics import YOLO; YOLO('yolo11n.pt'); print('YOLO OK')"
 ```
 
-O objetivo é evitar que o dispositivo Edge precise baixar os pesos no primeiro start da aplicação.
-
-Isso favorece execução em ambientes com conectividade limitada ou controlada.
+O objetivo é evitar que o primeiro start em produção dependa de download do modelo.
 
 ---
 
-## 20. Multiarquitetura
+## 21. Docker Compose
 
-O projeto foi validado para build:
+O projeto inclui `docker-compose.yml` com:
 
 ```text
-linux/amd64
-linux/arm64
+build pelo Dockerfile
+restart: always
+porta configurável
+healthcheck
+init
 ```
 
-A arquitetura ARM64 é relevante para dispositivos como Raspberry Pi 5 executando sistema operacional 64 bits.
+Validação:
 
-Build ARM64:
+```powershell
+docker compose config
+```
+
+Subida padrão:
+
+```powershell
+docker compose up --build -d
+```
+
+Health:
+
+```powershell
+curl.exe http://127.0.0.1:8000/health
+```
+
+Logs:
+
+```powershell
+docker compose logs -f
+```
+
+Encerramento:
+
+```powershell
+docker compose down
+```
+
+Se a porta `8000` estiver ocupada:
+
+```powershell
+$env:APP_PORT=8001
+docker compose up --build -d
+```
+
+Nesse caso:
+
+```text
+host:8001 → container:8000
+```
+
+O Compose não fixa `platform`, permitindo que a execução use a arquitetura nativa da imagem disponível no host.
+
+---
+
+## 22. Build ARM64
+
+O projeto foi validado para build ARM64 com Buildx:
 
 ```powershell
 docker buildx build `
@@ -693,7 +937,7 @@ docker buildx build `
   .
 ```
 
-Validação da arquitetura:
+Validação:
 
 ```powershell
 docker image inspect `
@@ -701,19 +945,21 @@ docker image inspect `
   --format '{{.Os}}/{{.Architecture}}'
 ```
 
-Resultado esperado e validado:
+Resultado validado:
 
 ```text
 linux/arm64
 ```
 
-A imagem ARM64 também foi inicializada e teve o endpoint `/health` validado utilizando emulação no Docker Desktop.
+A imagem ARM64 também foi inicializada em emulação no Docker Desktop e respondeu ao endpoint `/health`.
+
+Essa evidência demonstra compatibilidade funcional de build/runtime ARM64, não desempenho real no Raspberry Pi 5.
 
 ---
 
-## 21. Build multiarch
+## 23. Build multi-arquitetura
 
-Validação simultânea das duas arquiteturas:
+Validação conjunta:
 
 ```powershell
 docker buildx build `
@@ -723,7 +969,7 @@ docker buildx build `
   .
 ```
 
-Para publicação futura em um registry:
+Para publicação futura em registry:
 
 ```powershell
 docker buildx build `
@@ -733,21 +979,31 @@ docker buildx build `
   .
 ```
 
-Nesse cenário, o registry disponibiliza um manifesto com as duas arquiteturas.
+Nesse cenário, o registry publica um manifesto com as variantes:
 
-Um host AMD64 pode selecionar a imagem AMD64 e um host ARM64 pode selecionar a variante ARM64.
+```text
+linux/amd64
+linux/arm64
+```
 
-A publicação multiarch em registry não faz parte da validação realizada até este estágio.
+A publicação em registry não é necessária para a validação local já executada.
 
 ---
 
-## 22. Raspberry Pi 5
+## 24. Raspberry Pi 5
 
-O Raspberry Pi 5 é o alvo de implantação Edge considerado para a solução.
+O Raspberry Pi 5 é o alvo Edge considerado para implantação.
 
-O projeto já possui evidência de compatibilidade de build ARM64.
+O projeto já possui evidência de:
 
-Entretanto:
+```text
+build ARM64
+execução ARM64 emulada
+health check em ARM64
+build multiarch
+```
+
+Mas:
 
 ```text
 compatibilidade ARM64
@@ -755,54 +1011,53 @@ compatibilidade ARM64
 benchmark real no Raspberry Pi 5
 ```
 
-Os resultados de performance apresentados neste projeto foram medidos em outro hardware e não devem ser extrapolados diretamente para o Raspberry Pi.
-
-A próxima etapa em hardware real deve medir:
+A validação correta na placa real deve medir:
 
 ```text
-latência
-FPS
+latência mediana
+P95
+FPS efetivo do fluxo completo
 uso de CPU
 uso de memória
 temperatura
-consumo
+throttling
 estabilidade prolongada
 ```
 
 ---
 
-## 23. Estratégias de otimização Edge
+## 25. Estratégias de otimização Edge
 
-O modelo PyTorch utilizado no ambiente de desenvolvimento é adequado para validação funcional, mas não representa necessariamente o formato ideal para implantação final em um Raspberry Pi.
+O modelo PyTorch é adequado como baseline funcional, mas pode não ser o runtime final ideal para Raspberry Pi.
 
-Possíveis etapas posteriores incluem avaliação de:
+Possíveis experimentos posteriores:
 
 ```text
+redução controlada da resolução de entrada
 NCNN
 ONNX
 TFLite
 OpenVINO
 FP16
 INT8
-aceleradores/NPU compatíveis
+NPU/acelerador compatível
+redução da frequência de renderização PNG
 ```
 
-A escolha deve ser feita com benchmark no hardware alvo.
-
-Não se deve assumir que uma otimização será melhor sem medição.
+Nenhuma dessas alternativas deve ser declarada como superior sem benchmark no hardware alvo.
 
 ---
 
-## 24. Benchmark do núcleo de inferência
+## 26. Benchmark — ambiente utilizado
 
-Ambiente medido:
+Benchmark medido em:
 
 ```text
 CPU: AMD Ryzen 9 5900X
 Cores: 12
 Threads lógicas: 24
 CUDA: não disponível
-Execução do modelo: CPU
+Execução: CPU
 Imagem: 880 x 587
 Warm-up: 5 execuções
 Medições: 30 execuções
@@ -832,18 +1087,17 @@ Medições: 30 execuções
 | Desvio padrão            |  3.518 ms |
 | FPS teórico pela mediana |     24.98 |
 
-A diferença entre as medianas foi aproximadamente:
+Diferença entre medianas:
 
 ```text
-40.039 - 39.639
-≈ 0.4 ms
+40.039 - 39.639 ≈ 0.4 ms
 ```
 
-Isso indica que, neste experimento, a regra espacial acrescentou custo pequeno quando comparada à inferência do modelo.
+Neste experimento, a regra geométrica acrescentou custo pequeno quando comparada à inferência do modelo.
 
 ---
 
-## 25. Interpretação do FPS
+## 27. Interpretação do FPS
 
 O valor aproximado de:
 
@@ -851,38 +1105,30 @@ O valor aproximado de:
 25 inferências/s
 ```
 
-é um valor teórico calculado a partir da mediana do trecho medido.
+é **teórico**, derivado da mediana da etapa medida.
 
-Ele não representa automaticamente FPS real de câmera.
-
-O benchmark não inclui integralmente elementos como:
+Ele não representa automaticamente FPS real de câmera porque o benchmark do núcleo não inclui integralmente:
 
 ```text
-captura da câmera
+captura
 rede
 armazenamento
 pipeline de vídeo
-renderização da interface
+renderização
 outros processos concorrentes
 ```
 
-Portanto a forma correta de interpretar o resultado é:
+A forma correta de interpretar o resultado é:
 
 > O núcleo de inferência e classificação apresentou capacidade teórica próxima de 25 execuções por segundo no ambiente medido.
 
 ---
 
-## 26. Benchmark HTTP E2E
+## 28. Benchmark HTTP E2E
 
-Também foi medida a latência percebida por um cliente HTTP.
+O benchmark E2E mede a latência percebida pelo cliente HTTP.
 
-O benchmark foi executado contra a API em container Docker local utilizando `localhost`.
-
-### Endpoint JSON
-
-```text
-POST /api/v1/infer
-```
+### JSON — `POST /api/v1/infer`
 
 | Métrica                    | Resultado |
 | -------------------------- | --------: |
@@ -894,11 +1140,7 @@ POST /api/v1/infer
 | Desvio padrão              |  9.815 ms |
 | Req/s teórico pela mediana |     18.64 |
 
-### Endpoint PNG
-
-```text
-POST /api/v1/infer/annotated
-```
+### PNG — `POST /api/v1/infer/annotated`
 
 | Métrica                    |  Resultado |
 | -------------------------- | ---------: |
@@ -912,14 +1154,14 @@ POST /api/v1/infer/annotated
 
 ---
 
-## 27. Inferência versus latência E2E
+## 29. Inferência versus latência E2E
 
-Os benchmarks medem conceitos diferentes.
+Os números medem coisas diferentes.
 
 ### Núcleo
 
 ```text
-imagem já em memória
+imagem em memória
 → YOLO
 → classificação espacial
 ```
@@ -930,181 +1172,299 @@ Mediana:
 40.039 ms
 ```
 
-### API JSON
+### HTTP JSON
 
 ```text
 HTTP
 → multipart
 → decode
 → YOLO
-→ classificação
-→ JSON
-→ HTTP response
+→ zonas
+→ alerta
+→ serialização JSON
+→ resposta HTTP
 ```
 
-Mediana:
+Mediana medida antes da inclusão da camada explícita de alerta:
 
 ```text
 53.650 ms
 ```
 
-### API PNG
+### HTTP PNG
 
 ```text
 HTTP
 → multipart
 → decode
 → YOLO
-→ classificação
+→ zonas
+→ alerta
 → desenho
 → encode PNG
-→ HTTP response
+→ resposta HTTP
 ```
 
-Mediana:
+Mediana medida antes da inclusão da camada explícita de alerta:
 
 ```text
 86.470 ms
 ```
 
-Isso demonstra por que tempo de inferência não deve ser tratado como sinônimo de latência total do sistema.
+A política de alerta adicionada posteriormente é determinística e de baixo custo, mas os benchmarks E2E devem ser repetidos na versão final antes de declarar números atualizados.
 
 ---
 
-## 28. Sobre P95
+## 30. P95 e requisições por segundo
 
-Além da média e da mediana, foi calculado o percentil 95.
+O P95 representa aproximadamente o valor abaixo do qual ficaram 95% das medições observadas.
 
-Exemplo do endpoint JSON:
+Exemplo do benchmark JSON:
 
 ```text
 P95 = 76.196 ms
 ```
 
-Isso significa que aproximadamente 95% das execuções observadas ficaram até esse valor.
-
-Para sistemas interativos ou operacionais, percentis ajudam a identificar o comportamento das requisições mais lentas e são frequentemente mais informativos do que apenas a média.
-
----
-
-## 29. Requisições por segundo
-
-Os valores de `req/s` mostrados pelo benchmark são calculados a partir da mediana:
+Os valores de `req/s` são calculados teoricamente a partir da mediana:
 
 ```text
 1000 / mediana_ms
 ```
 
-Eles representam somente capacidade teórica de execução sequencial.
+Eles representam execução sequencial e **não equivalem a usuários simultâneos ou capacidade de carga concorrente**.
 
 Não foram realizados testes de:
 
 ```text
 concorrência
-múltiplos usuários
 stress
 carga sustentada
 escalabilidade horizontal
 ```
 
-Portanto esses valores não devem ser apresentados como capacidade de usuários simultâneos.
+---
+
+## 31. Discussão de latência aceitável
+
+O teste técnico pede discussão de viabilidade e latência, mas não fixa um limite numérico universal para este caso.
+
+Para o protótipo, pode-se adotar como **meta inicial de engenharia**, a ser validada com o responsável pelo processo industrial:
+
+```text
+P95 do pipeline de alerta ≤ 200 ms
+```
+
+Esse valor é apenas um critério de projeto para avaliar resposta próxima de tempo real no protótipo.
+
+**Não é um requisito normativo de NR-12 ou ISO 13849 e não representa tempo seguro de parada de máquina.**
+
+Os benchmarks medidos no ambiente local ficaram abaixo dessa referência, porém esses resultados não podem ser extrapolados diretamente para Raspberry Pi 5.
+
+Em hardware real, a meta deve ser reavaliada considerando:
+
+```text
+velocidade de aproximação
+distância até a zona perigosa
+latência de câmera
+latência de inferência
+comunicação
+atuadores
+tempo de parada da máquina
+margem de segurança
+```
+
+Para uma função de segurança real, a latência admissível deve resultar da análise de risco e do projeto funcional completo.
 
 ---
 
-## 30. Testes automatizados
+## 32. Testes automatizados
 
-A suíte utiliza `pytest`.
-
-Execução:
+Execute:
 
 ```powershell
 python -m pytest -v
 ```
 
-Resultado validado:
+A suíte contém testes para:
 
 ```text
-6 passed
+health check
+contrato JSON
+retorno PNG válido
+imagem inválida
+SEGURO / ALERTA / CRÍTICO
+prioridade da zona vermelha
+mapeamento SEGURO → NONE
+mapeamento ALERTA → WARNING
+mapeamento CRÍTICO → CRITICAL
+seleção da maior severidade
 ```
 
-Os testes cobrem:
+Com os arquivos desta versão, o resultado esperado é:
 
-| Área         | Validação                               |
-| ------------ | --------------------------------------- |
-| Health       | HTTP 200 e contrato básico              |
-| API JSON     | estrutura e valores do contrato         |
-| API PNG      | retorno `image/png` e PNG decodificável |
-| API inválida | rejeição de conteúdo não decodificável  |
-| Zonas        | SEGURO, ALERTA e CRÍTICO                |
-| Prioridade   | zona vermelha sobre zona amarela        |
+```text
+10 passed
+```
+
+Antes da entrega final, esse resultado deve ser confirmado no ambiente de validação e somente então tratado como evidência executada.
 
 ---
 
-## 31. Estratégia de testes
-
-A solução separa testes determinísticos da validação do modelo.
+## 33. Estratégia de testes
 
 ### Motor de zonas
 
 É determinístico.
 
-Para um ponto conhecido, o resultado esperado pode ser testado exatamente:
+Pontos conhecidos:
 
 ```text
-(643, 583)
-→ SEGURO
+(643, 583) → SEGURO
+(443, 470) → ALERTA
+(443, 555) → CRÍTICO
+```
 
-(443, 470)
-→ ALERTA
+### Política de alertas
 
-(443, 555)
-→ CRÍTICO
+Também é determinística:
+
+```text
+SEGURO  → NONE
+ALERTA  → WARNING
+CRÍTICO → CRITICAL
 ```
 
 ### API
 
-Os testes automatizados substituem a inferência real por resultados conhecidos.
-
-Isso permite validar rapidamente:
+Os testes automatizados substituem a inferência real por resultados controlados para validar:
 
 ```text
 contrato HTTP
-serialização JSON
+serialização
 PNG
+alerta agregado
 tratamento de erros
 ```
 
-sem depender de performance, modelo ou hardware.
-
 ### IA
 
-O comportamento real do detector foi validado separadamente através de:
+A inferência real é validada separadamente por:
 
 ```text
 execução E2E
 imagem de demonstração
 Docker
-benchmark
+benchmarks
 ```
 
-Essa separação evita transformar todos os testes em testes caros e não determinísticos de Machine Learning.
+Isso evita transformar toda a suíte em testes caros e dependentes de hardware/modelo.
 
 ---
 
-## 32. Limitações atuais
+## 34. Verificação E2E da Parte 1
 
-Este projeto é um protótipo técnico e possui limitações que precisam ser consideradas em um cenário industrial real.
-
-Entre elas estão:
+O script:
 
 ```text
-oclusão parcial ou total da pessoa
+scripts/verify_part1.ps1
+```
+
+organiza a validação final em um único fluxo.
+
+Execução completa:
+
+```powershell
+.\scripts\verify_part1.ps1
+```
+
+Por padrão ele utiliza a porta `8001` no host.
+
+Etapas:
+
+```text
+1. pytest
+2. docker compose config
+3. docker compose up --build
+4. GET /health
+5. POST /api/v1/infer
+6. POST /api/v1/infer/annotated
+7. build multiarch amd64 + arm64
+```
+
+O script também grava evidências locais:
+
+```text
+outputs/evidence-infer.json
+outputs/evidence-annotated.png
+```
+
+Para manter o serviço ativo ao final:
+
+```powershell
+.\scripts\verify_part1.ps1 -KeepRunning
+```
+
+Para iteração rápida, pulando somente a repetição do build multiarch:
+
+```powershell
+.\scripts\verify_part1.ps1 -SkipMultiArch
+```
+
+A validação final da entrega deve ser executada **sem** `-SkipMultiArch`.
+
+---
+
+## 35. Evidência dos endpoints
+
+A comprovação pode ser feita com o serviço em execução local ou em outro host acessível.
+
+### Health
+
+```powershell
+curl.exe http://127.0.0.1:8001/health
+```
+
+### JSON
+
+```powershell
+curl.exe -X POST `
+  "http://127.0.0.1:8001/api/v1/infer" `
+  -F "file=@samples/input.jpg"
+```
+
+### PNG
+
+```powershell
+curl.exe -X POST `
+  "http://127.0.0.1:8001/api/v1/infer/annotated" `
+  -F "file=@samples/input.jpg" `
+  --output outputs/evidence-annotated.png
+```
+
+Swagger:
+
+```text
+http://127.0.0.1:8001/docs
+```
+
+Os endpoints são HTTP reais. Os exemplos usam `localhost` para a demonstração; publicação aberta na Internet não é necessária para provar o funcionamento do serviço.
+
+---
+
+## 36. Limitações atuais
+
+Este projeto é um protótipo técnico.
+
+Limitações relevantes:
+
+```text
+oclusão parcial ou total
 iluminação variável
 baixa resolução
 motion blur
 fumaça ou névoa
 posição e ângulo da câmera
-distância da pessoa
+distância
 perspectiva
 falsos positivos
 falsos negativos
@@ -1112,15 +1472,15 @@ mudanças no ambiente
 objetos bloqueando o campo de visão
 ```
 
-Também não há tracking temporal neste estágio.
+Não há tracking temporal nesta versão.
 
-Cada frame é tratado de forma independente.
+Cada imagem/frame é analisado de forma independente.
 
 ---
 
-## 33. Melhorias futuras
+## 37. Melhorias futuras
 
-Possíveis evoluções técnicas incluem:
+Possíveis evoluções:
 
 ```text
 tracking de pessoas
@@ -1129,110 +1489,117 @@ histerese de alertas
 múltiplas câmeras
 múltiplas zonas
 configuração remota
-telemetria
 MQTT
-eventos
+telemetria
 armazenamento de evidências
 dashboard
-exportação para formato otimizado
+fine-tuning
+exportação para runtime otimizado
 quantização
-aceleração por NPU
+NPU/acelerador
 benchmark real no Raspberry Pi 5
-fine-tuning para cenário industrial
 ```
 
 ---
 
-## 34. Métricas de visão computacional
+## 38. Segurança funcional
 
-A latência é apenas uma parte da avaliação.
+Este projeto demonstra **monitoramento visual, classificação de risco e geração de alertas**.
 
-Para validar um detector em um ambiente industrial real também devem ser consideradas métricas como:
+Ele não deve ser tratado como substituto direto de funções ou dispositivos de segurança certificados.
+
+Em aplicação industrial real, requisitos de proteção de máquinas e segurança funcional precisam ser tratados no contexto normativo aplicável, incluindo NR-12 e ISO 13849 quando pertinentes.
+
+A visão computacional pode atuar como camada adicional de:
 
 ```text
-Precision
-Recall
-F1-score
-IoU
-mAP
-matriz de confusão
+percepção
+monitoramento
+evidência
+alerta
 ```
 
-Um sistema rápido, mas com detecção inadequada, não atende ao problema.
-
-Particularmente em aplicações de segurança, falsos negativos merecem atenção especial.
+Uma implementação destinada a exercer função de segurança exige engenharia, validação e certificação apropriadas.
 
 ---
 
-## 35. Segurança funcional
+## 39. Decisão técnica central
 
-Este projeto demonstra monitoramento visual e classificação de risco utilizando Edge AI.
-
-Ele não deve ser tratado como substituto direto de dispositivos ou funções de segurança certificados.
-
-Em um sistema industrial real, requisitos associados à proteção de máquinas e segurança funcional precisam ser analisados no contexto aplicável, incluindo normas e procedimentos relevantes, como NR-12 e ISO 13849 quando pertinentes.
-
-A visão computacional pode atuar como uma camada adicional de percepção, monitoramento, evidência ou alerta.
-
-Uma implementação destinada a exercer função de segurança exige engenharia, validação e certificação apropriadas ao contexto.
-
----
-
-## 36. Decisão técnica central
-
-A principal decisão arquitetural do projeto pode ser resumida em:
+A solução pode ser resumida em:
 
 ```text
 YOLO
 → percebe a pessoa
 
 foot_point
-→ representa sua posição no piso
+→ aproxima sua posição no piso
 
 polígono
 → representa a zona operacional
 
 regra determinística
-→ decide o risco
+→ classifica o risco
+
+política determinística
+→ define alerta proporcional
 ```
 
-Isso evita utilizar Machine Learning onde uma regra geométrica simples, explicável e testável resolve melhor o problema.
+A ideia central é evitar usar Machine Learning onde uma regra simples, explicável e testável resolve melhor o problema.
 
 ---
 
-## 37. Estado atual
+## 40. Estado da Parte 1
 
-A implementação já contempla:
+A implementação desta versão contempla:
 
 ```text
 detecção de pessoas
 bounding boxes
+confidence
 foot_point
 zona amarela
 zona vermelha
 SEGURO / ALERTA / CRÍTICO
+alerta proporcional
 calibração das zonas
 imagem anotada
 API JSON
 API PNG
 health check
-Docker
+Dockerfile
+docker-compose.yml
+restart: always
 build AMD64
 build ARM64
 validação multiarch com Buildx
 benchmark do núcleo
 benchmark HTTP E2E
 testes automatizados
+script de validação E2E
 ```
 
-O principal trabalho restante para uma implantação real seria a validação no hardware Edge e no ambiente industrial alvo.
+Executar a validação final:
+
+````powershell
+python -m pytest -v
+.\scripts\verify_part1.ps1
+
+
+```powershell
+.\scripts\verify_part1.ps1
+
+## PowerShell é só política de execução:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+python
+````
 
 ---
 
-## 38. Autor
+## 41. Autor
 
 **Fabiano Barros**
 
-Projeto desenvolvido como exercício técnico de arquitetura, Edge AI, visão computacional, APIs e implantação multiplataforma.
+Projeto desenvolvido para avaliação técnica envolvendo Edge AI, visão computacional, APIs, Docker, multi-arquitetura e análise de implantação embarcada.
 
 Agosto de 2026.
